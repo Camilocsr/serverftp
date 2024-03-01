@@ -15,9 +15,9 @@ using Amazon.TranscribeService.Model;
 using NAudio.Wave;
 using Newtonsoft.Json;
 using Amazon.S3;
-using Amazon.S3.Model;
 using Amazon.S3.Transfer;
 using FTPSERVER;
+
 
 class Program
 {
@@ -83,135 +83,80 @@ class Program
             }
 
             Console.WriteLine("Audio recibido de Unity.");
+            await SaveAudioLocally(fileData);
+            transcribedText = await SendFileToServer("guardar/audio_recibido.wav");
 
             Stopwatch stopwatch = Stopwatch.StartNew();
-
-            await SaveAudioToS3(fileData);
-
-            Console.WriteLine($"Tiempo total de SaveAudioToS3: {stopwatch.ElapsedMilliseconds / 1000.0} segundos");
 
             stopwatch.Restart();
 
-            await EnvioServerHttp(transcribedText, stream);
-
             Console.WriteLine($"Tiempo total de EnvioServerHttp: {stopwatch.ElapsedMilliseconds / 1000.0} segundos");
 
-            Console.WriteLine(transcribedText);
+            Console.WriteLine(transcribedText); // Mostrar el texto devuelto por la API de OpenAI Turbo
+
+            GeneratePollyAudio(transcribedText, stream);
         }
     }
 
-    static async Task SaveAudioToS3(byte[] audioData)
+    static async Task<string> SendFileToServer(string filePath)
     {
-        try
+        using (var httpClient = new HttpClient())
         {
-            string bucketName = "unitrascripcionesingles";
-            string keyName = "carpeta/audio.wav";
-
-            using (var client = new AmazonS3Client(Claves.Credentials, Amazon.RegionEndpoint.SAEast1))
+            try
             {
-                using (var memoryStream = new MemoryStream(audioData))
+                // URL del servidor donde quieres enviar el archivo
+                string serverUrl = "http://192.168.1.17:9999/v1/OpenAi";
+
+                // Crea un StreamContent para el archivo
+                using (var fileContent = new ByteArrayContent(await File.ReadAllBytesAsync(filePath)))
                 {
-                    var fileTransferUtility = new TransferUtility(client);
-                    await fileTransferUtility.UploadAsync(memoryStream, bucketName, keyName);
+                    // Crea un formulario multipart para el archivo
+                    using (var formData = new MultipartFormDataContent())
+                    {
+                        formData.Add(fileContent);
+
+                        // Envía el formulario al servidor y espera la respuesta
+                        HttpResponseMessage response = await httpClient.PostAsync(serverUrl, formData);
+
+                        // Verifica si la solicitud fue exitosa
+                        if (response.IsSuccessStatusCode)
+                        {
+                            Console.WriteLine("Archivo enviado exitosamente al servidor HTTP.");
+                            // Lee el contenido de la respuesta como una cadena
+                            string responseBody = await response.Content.ReadAsStringAsync();
+                            return responseBody; // Devuelve el texto devuelto por la API de OpenAI Turbo
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Error al enviar el archivo al servidor HTTP. Código de estado: {response.StatusCode}");
+                            return null;
+                        }
+                    }
                 }
             }
-
-            Console.WriteLine("Archivo de audio guardado en Amazon S3.");
-            await TranscribeAudio(bucketName, keyName);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Error al guardar el archivo de audio en S3: " + ex.Message);
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al enviar el archivo al servidor HTTP: {ex.Message}");
+                return null;
+            }
         }
     }
 
-    static async Task TranscribeAudio(string bucketName, string keyName)
+    static async Task SaveAudioLocally(byte[] fileData)
     {
         try
         {
-            string jobName = "AudioTranscriptionJob_" + DateTime.Now.ToString("yyyyMMddHHmmss");
+            // Ruta donde deseas guardar el archivo recibido
+            string filePath = "guardar/audio_recibido.wav";
 
+            // Guarda los datos del archivo en el sistema de archivos
+            await File.WriteAllBytesAsync(filePath, fileData);
 
-            var transcribeClient = new AmazonTranscribeServiceClient(Claves.Credentials, RegionEndpoint.SAEast1);
-
-            var request = new StartTranscriptionJobRequest
-            {
-                TranscriptionJobName = jobName,
-                LanguageCode = Amazon.TranscribeService.LanguageCode.EsES,
-                Media = new Media
-                {
-                    MediaFileUri = "https://s3.amazonaws.com/" + bucketName + "/" + keyName
-                }
-            };
-
-            var response = await transcribeClient.StartTranscriptionJobAsync(request);
-
-            Stopwatch stopwatch = Stopwatch.StartNew();
-
-            while (true)
-            {
-                var jobResponse = await transcribeClient.GetTranscriptionJobAsync(new GetTranscriptionJobRequest
-                {
-                    TranscriptionJobName = response.TranscriptionJob.TranscriptionJobName
-                });
-
-                if (jobResponse.TranscriptionJob.TranscriptionJobStatus == TranscriptionJobStatus.COMPLETED)
-                {
-                    var transcriptUri = jobResponse.TranscriptionJob.Transcript.TranscriptFileUri;
-                    var transcriptJson = await new WebClient().DownloadStringTaskAsync(transcriptUri);
-                    var transcriptResult = JsonConvert.DeserializeObject<Transcript>(transcriptJson);
-
-                    var transcript = transcriptResult.results.transcripts[0].transcript;
-                    transcribedText = transcript;
-                    Console.WriteLine("Texto transcrito:");
-                    Console.WriteLine(transcript);
-
-                    break;
-                }
-                else if (jobResponse.TranscriptionJob.TranscriptionJobStatus == TranscriptionJobStatus.FAILED)
-                {
-                    throw new Exception("La transcripción del audio ha fallado.");
-                }
-            }
-
-            Console.WriteLine($"Tiempo total de TranscribeAudio: {stopwatch.ElapsedMilliseconds / 1000.0} segundos");
+            Console.WriteLine("Archivo de audio guardado localmente correctamente.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine("Error al transcribir el audio: " + ex.Message);
-        }
-    }
-
-    static async Task EnvioServerHttp(string message, NetworkStream stream)
-    {
-        try
-        {
-            using (var httpClient = new HttpClient())
-            {
-                var requestBody = new { texto = message };
-                var content = new StringContent(JsonConvert.SerializeObject(requestBody), Encoding.UTF8, "application/json");
-
-                var response = await httpClient.PostAsync("http://192.168.1.17:9999/v1/OpenAi", content);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    string responseBody = await response.Content.ReadAsStringAsync();
-                    dynamic jsonResponse = JsonConvert.DeserializeObject(responseBody);
-                    string textoModificado = jsonResponse.textoModificado;
-                    Console.WriteLine("Texto modificado recibido del servidor HTTP: " + textoModificado);
-                    Console.WriteLine("Mensaje enviado exitosamente al servidor HTTP.");
-
-                    GeneratePollyAudio(textoModificado, stream);
-                }
-                else
-                {
-                    Console.WriteLine($"Error al enviar el mensaje al servidor HTTP. Código de estado: {response.StatusCode}");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error al enviar el mensaje al servidor HTTP: {ex.Message}");
+            Console.WriteLine($"Error al guardar el archivo de audio localmente: {ex.Message}");
         }
     }
 
@@ -224,7 +169,6 @@ class Program
                 var request = new SynthesizeSpeechRequest
                 {
                     Text = text,
-                    // VoiceId = VoiceId.Emma,
                     VoiceId = VoiceId.Lucia,
                     OutputFormat = OutputFormat.Pcm
                 };
@@ -260,8 +204,6 @@ class Program
                     clientStream.Write(fileData, 0, fileData.Length);
                     Console.WriteLine("Audio enviado al cliente.");
 
-                    DeleteFilesInS3Folder("unitrascripcionesingles","carpeta");
-
 
                     File.Delete(audioFileName);
                     Console.WriteLine("Archivo temporal eliminado: " + audioFileName);
@@ -272,54 +214,5 @@ class Program
         {
             Console.WriteLine("Error al generar y enviar el audio: " + ex.Message);
         }
-    }
-
-
-    static async Task DeleteFilesInS3Folder(string bucketName, string folderName)
-    {
-        try
-        {
-            using (var client = new AmazonS3Client(Claves.Credentials, Amazon.RegionEndpoint.SAEast1))
-            {
-                var listObjectsRequest = new ListObjectsV2Request
-                {
-                    BucketName = bucketName,
-                    Prefix = folderName + "/"
-                };
-
-                var listObjectsResponse = await client.ListObjectsV2Async(listObjectsRequest);
-
-                foreach (var obj in listObjectsResponse.S3Objects)
-                {
-                    var deleteObjectRequest = new DeleteObjectRequest
-                    {
-                        BucketName = bucketName,
-                        Key = obj.Key
-                    };
-
-                    await client.DeleteObjectAsync(deleteObjectRequest);
-                    Console.WriteLine($"Archivo eliminado: {obj.Key}");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Error al borrar archivos de S3: " + ex.Message);
-        }
-    }
-
-    class Transcript
-    {
-        public TranscriptResults results { get; set; }
-    }
-
-    class TranscriptResults
-    {
-        public List<TranscriptItem> transcripts { get; set; }
-    }
-
-    class TranscriptItem
-    {
-        public string transcript { get; set; }
     }
 }
