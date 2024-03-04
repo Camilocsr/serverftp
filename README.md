@@ -5,7 +5,6 @@ Este código implementa un servidor TCP en C# que se encarga del procesamiento d
 ## Funcionalidades Principales
 
 - **Recepción de Audio**: El servidor espera conexiones TCP y recibe archivos de audio desde un cliente Unity.
-- **Transcripción**: Utiliza Transcribe de AWS para transcribir el contenido de los archivos de audio recibidos.
 - **Procesamiento de Texto**: Envía el texto transcribido a un servidor HTTP externo para su procesamiento adicional.
 - **Generación de Audio**: Utiliza Polly de AWS para generar audio a partir del texto procesado y lo envía de vuelta al cliente.
 

@@ -22,6 +22,7 @@ using FTPSERVER;
 class Program
 {
     static string transcribedText;
+    private static SemaphoreSlim semaphore = new SemaphoreSlim(1, 1);
     static void Main()
     {
         TcpListener listener = new TcpListener(Claves.IpAddress, Claves.Port);
@@ -83,48 +84,54 @@ class Program
             }
 
             Console.WriteLine("Audio recibido de Unity.");
-            await SaveAudioLocally(fileData);
-            transcribedText = await SendFileToServer("guardar/audio_recibido.wav");
 
-            Stopwatch stopwatch = Stopwatch.StartNew();
+            await semaphore.WaitAsync(); // Espera el semáforo
+            try
+            {
+                // Realiza el procesamiento del audio
+                await SaveAudioLocally(fileData);
+                transcribedText = await SendFileToServer("guardar/audio_recibido.wav");
 
-            stopwatch.Restart();
+                Stopwatch stopwatch = Stopwatch.StartNew();
+                stopwatch.Restart();
 
-            Console.WriteLine($"Tiempo total de EnvioServerHttp: {stopwatch.ElapsedMilliseconds / 1000.0} segundos");
-
-            Console.WriteLine(transcribedText); // Mostrar el texto devuelto por la API de OpenAI Turbo
-
-            GeneratePollyAudio(transcribedText, stream);
+                Console.WriteLine($"Tiempo total de EnvioServerHttp: {stopwatch.ElapsedMilliseconds / 1000.0} segundos");
+                Console.WriteLine(transcribedText); // Mostrar el texto devuelto por la API de OpenAI Turbo
+                GeneratePollyAudio(transcribedText, stream);
+            }
+            finally
+            {
+                semaphore.Release(); // Libera el semáforo después de completar el procesamiento
+            }
         }
     }
-
     static async Task<string> SendFileToServer(string filePath)
     {
         using (var httpClient = new HttpClient())
         {
             try
             {
-                // URL del servidor donde quieres enviar el archivo
+
                 string serverUrl = "http://192.168.1.17:9999/v1/OpenAi";
 
-                // Crea un StreamContent para el archivo
+
                 using (var fileContent = new ByteArrayContent(await File.ReadAllBytesAsync(filePath)))
                 {
-                    // Crea un formulario multipart para el archivo
+
                     using (var formData = new MultipartFormDataContent())
                     {
                         formData.Add(fileContent);
 
-                        // Envía el formulario al servidor y espera la respuesta
+
                         HttpResponseMessage response = await httpClient.PostAsync(serverUrl, formData);
 
-                        // Verifica si la solicitud fue exitosa
+
                         if (response.IsSuccessStatusCode)
                         {
                             Console.WriteLine("Archivo enviado exitosamente al servidor HTTP.");
-                            // Lee el contenido de la respuesta como una cadena
+
                             string responseBody = await response.Content.ReadAsStringAsync();
-                            return responseBody; // Devuelve el texto devuelto por la API de OpenAI Turbo
+                            return responseBody;
                         }
                         else
                         {
@@ -146,10 +153,10 @@ class Program
     {
         try
         {
-            // Ruta donde deseas guardar el archivo recibido
+
             string filePath = "guardar/audio_recibido.wav";
 
-            // Guarda los datos del archivo en el sistema de archivos
+
             await File.WriteAllBytesAsync(filePath, fileData);
 
             Console.WriteLine("Archivo de audio guardado localmente correctamente.");
