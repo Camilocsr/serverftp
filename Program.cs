@@ -1,4 +1,6 @@
-﻿using System;
+﻿#pragma warning disable CS8603
+#pragma warning disable CS8618
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -10,18 +12,19 @@ using System.Threading.Tasks;
 using Amazon;
 using Amazon.Polly;
 using Amazon.Polly.Model;
-using Amazon.TranscribeService;
-using Amazon.TranscribeService.Model;
 using NAudio.Wave;
 using Newtonsoft.Json;
-using Amazon.S3;
-using Amazon.S3.Transfer;
+using System.Text.RegularExpressions;
 using FTPSERVER;
 
 
 class Program
 {
     static string transcribedText;
+    /// <summary>
+    /// The Main function sets up a TCP listener on a specified IP address and port, accepts incoming
+    /// client connections, and handles each client connection in a separate task.
+    /// </summary>
     static void Main()
     {
         TcpListener listener = new TcpListener(Claves.IpAddress, Claves.Port);
@@ -49,6 +52,14 @@ class Program
         }
     }
 
+    /// <summary>
+    /// The HandleClient function asynchronously reads audio data from a TcpClient stream, saves it
+    /// locally, sends it to a server, transcribes it, and generates audio using Polly.
+    /// </summary>
+    /// <param name="TcpClient">The `TcpClient` parameter in the `HandleClient` method represents a TCP
+    /// client connection. It is used to communicate over a TCP connection with a remote host. In the
+    /// provided code snippet, the `TcpClient` object is passed to the `HandleClient` method to handle
+    /// communication with the client</param>
     static async Task HandleClient(TcpClient client)
     {
         NetworkStream stream = client.GetStream();
@@ -92,39 +103,52 @@ class Program
 
             Console.WriteLine($"Tiempo total de EnvioServerHttp: {stopwatch.ElapsedMilliseconds / 1000.0} segundos");
 
-            Console.WriteLine(transcribedText); // Mostrar el texto devuelto por la API de OpenAI Turbo
+            Console.WriteLine(transcribedText);
 
             GeneratePollyAudio(transcribedText, stream);
         }
     }
 
+    /// <summary>
+    /// The function `SendFileToServer` sends a file to a specified server URL using HTTP POST request
+    /// with error handling.
+    /// </summary>
+    /// <param name="filePath">The `SendFileToServer` method you provided is an asynchronous method that
+    /// sends a file to a server using HttpClient. It reads the file content asynchronously, creates a
+    /// multipart form data content with the file content, and then sends a POST request to the
+    /// specified server URL.</param>
+    /// <returns>
+    /// The method `SendFileToServer` is returning a `Task<string>`. The string being returned is the
+    /// response body from the server if the file was successfully sent and the response status code is
+    /// successful. If there is an error during the process, it will return null.
+    /// </returns>
     static async Task<string> SendFileToServer(string filePath)
     {
         using (var httpClient = new HttpClient())
         {
             try
             {
-                // URL del servidor donde quieres enviar el archivo
+
                 string serverUrl = "http://192.168.1.17:9999/v1/OpenAi";
 
-                // Crea un StreamContent para el archivo
+
                 using (var fileContent = new ByteArrayContent(await File.ReadAllBytesAsync(filePath)))
                 {
-                    // Crea un formulario multipart para el archivo
+
                     using (var formData = new MultipartFormDataContent())
                     {
                         formData.Add(fileContent);
 
-                        // Envía el formulario al servidor y espera la respuesta
+
                         HttpResponseMessage response = await httpClient.PostAsync(serverUrl, formData);
 
-                        // Verifica si la solicitud fue exitosa
+
                         if (response.IsSuccessStatusCode)
                         {
                             Console.WriteLine("Archivo enviado exitosamente al servidor HTTP.");
-                            // Lee el contenido de la respuesta como una cadena
+
                             string responseBody = await response.Content.ReadAsStringAsync();
-                            return responseBody; // Devuelve el texto devuelto por la API de OpenAI Turbo
+                            return responseBody;
                         }
                         else
                         {
@@ -142,14 +166,19 @@ class Program
         }
     }
 
+    /// <summary>
+    /// The function `SaveAudioLocally` saves audio data as a WAV file locally in C# asynchronously.
+    /// </summary>
+    /// <param name="fileData">fileData is a byte array containing the audio data that needs to be saved
+    /// locally as a WAV file.</param>
     static async Task SaveAudioLocally(byte[] fileData)
     {
         try
         {
-            // Ruta donde deseas guardar el archivo recibido
+
             string filePath = "guardar/audio_recibido.wav";
 
-            // Guarda los datos del archivo en el sistema de archivos
+
             await File.WriteAllBytesAsync(filePath, fileData);
 
             Console.WriteLine("Archivo de audio guardado localmente correctamente.");
@@ -160,16 +189,32 @@ class Program
         }
     }
 
+    /// <summary>
+    /// The function `GeneratePollyAudio` generates audio from text using Amazon Polly and sends it to a
+    /// client stream in C#.
+    /// </summary>
+    /// <param name="text">The `GeneratePollyAudio` method you provided is responsible for generating
+    /// audio from text using Amazon Polly service and sending it to a client through a network
+    /// stream.</param>
+    /// <param name="NetworkStream">The `NetworkStream` parameter in the `GeneratePollyAudio` method
+    /// represents a stream used for reading and writing data over a network connection. In this
+    /// context, it is being used to send the generated audio file to a client over the network. The
+    /// `clientStream` parameter is an instance of</param>
     static void GeneratePollyAudio(string text, NetworkStream clientStream)
     {
         try
         {
+
+            text = Regex.Replace(text, @"[\p{P}\p{S}]", "");
+
             using (var pollyClient = new AmazonPollyClient(Claves.Credentials, RegionEndpoint.SAEast1))
             {
                 var request = new SynthesizeSpeechRequest
                 {
                     Text = text,
-                    VoiceId = VoiceId.Lucia,
+                    // VoiceId = VoiceId.Lucia, // voz en Español.
+                    VoiceId = VoiceId.Joanna, // Voz en Ingles.
+                    //VoiceId = VoiceId.Celine, // Voz en Frances.
                     OutputFormat = OutputFormat.Pcm
                 };
 
@@ -180,10 +225,7 @@ class Program
                     response.AudioStream.CopyTo(memoryStream);
                     memoryStream.Seek(0, SeekOrigin.Begin);
 
-
                     string tempDirectory = Path.GetTempPath();
-
-
                     string audioFileName = Path.Combine(tempDirectory, Guid.NewGuid().ToString() + ".wav");
 
                     using (var fileStream = new FileStream(audioFileName, FileMode.Create, FileAccess.Write))
@@ -203,7 +245,6 @@ class Program
                     clientStream.Write(fileSize, 0, fileSize.Length);
                     clientStream.Write(fileData, 0, fileData.Length);
                     Console.WriteLine("Audio enviado al cliente.");
-
 
                     File.Delete(audioFileName);
                     Console.WriteLine("Archivo temporal eliminado: " + audioFileName);
