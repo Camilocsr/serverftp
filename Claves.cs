@@ -17,11 +17,11 @@ namespace FTPSERVER
 
         // Definir AWS Access Key ID para acceder a los servicios de AWS
         // Define AWS Access Key ID for accessing AWS services
-        public static string AccessKeyId { get; } = "";
+        public static string AccessKeyId { get; } = "AKIA5FTZDCKYEAXPGO64";
 
         // Definir Secret Access Key para acceder a los servicios de AWS
         // Define Secret Access Key for accessing AWS services
-        public static string SecretAccessKey { get; } = "";
+        public static string SecretAccessKey { get; } = "0C5AR6Iz840Su8ucCkiiM4EXrsxIxT/lrTg3Diwe";
 
         // Crear objeto BasicAWSCredentials utilizando el Access Key ID y Secret Access Key
         // Create BasicAWSCredentials object using the Access Key ID and Secret Access Key

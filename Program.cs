@@ -66,8 +66,8 @@ class Program
 
         while (true)
         {
-            byte[] fileSizeBytes = new byte[4];
-            int bytesRead = await stream.ReadAsync(fileSizeBytes, 0, fileSizeBytes.Length);
+            byte[] headerSizeBytes = new byte[4];
+            int bytesRead = await stream.ReadAsync(headerSizeBytes, 0, headerSizeBytes.Length);
 
             if (bytesRead == 0)
             {
@@ -75,40 +75,103 @@ class Program
                 break;
             }
 
-            int fileSize = BitConverter.ToInt32(fileSizeBytes, 0);
+            int headerSize = BitConverter.ToInt32(headerSizeBytes, 0);
 
-            byte[] fileData = new byte[fileSize];
-            int bytesReadTotal = 0;
-            int bytesReadThisTime;
+            byte[] headerBytes = new byte[headerSize];
+            bytesRead = await stream.ReadAsync(headerBytes, 0, headerBytes.Length);
 
-            while (bytesReadTotal < fileSize)
+            if (bytesRead == 0)
             {
-                bytesReadThisTime = await stream.ReadAsync(fileData, bytesReadTotal, fileSize - bytesReadTotal);
-
-                if (bytesReadThisTime == 0)
-                {
-                    throw new Exception("Error al recibir datos de audio: se esperaba más datos pero se recibieron cero.");
-                }
-
-                bytesReadTotal += bytesReadThisTime;
+                Console.WriteLine("Cliente desconectado.");
+                break;
             }
 
-            Console.WriteLine("Audio recibido de Unity.");
-            await SaveAudioLocally(fileData);
-            transcribedText = await SendFileToServer("guardar/audio_recibido.wav");
+            string header = System.Text.Encoding.UTF8.GetString(headerBytes);
 
-            Stopwatch stopwatch = Stopwatch.StartNew();
+            
+            if (header == "AUDIO")
+            {
+                byte[] fileSizeBytes = new byte[4];
+                bytesRead = await stream.ReadAsync(fileSizeBytes, 0, fileSizeBytes.Length);
 
-            stopwatch.Restart();
+                if (bytesRead == 0)
+                {
+                    Console.WriteLine("Cliente desconectado.");
+                    break;
+                }
 
-            Console.WriteLine($"Tiempo total de EnvioServerHttp: {stopwatch.ElapsedMilliseconds / 1000.0} segundos");
+                int fileSize = BitConverter.ToInt32(fileSizeBytes, 0);
 
-            Console.WriteLine(transcribedText);
+                byte[] fileData = new byte[fileSize];
+                int bytesReadTotal = 0;
+                int bytesReadThisTime;
 
-            GeneratePollyAudio(transcribedText, stream);
+                while (bytesReadTotal < fileSize)
+                {
+                    bytesReadThisTime = await stream.ReadAsync(fileData, bytesReadTotal, fileSize - bytesReadTotal);
+
+                    if (bytesReadThisTime == 0)
+                    {
+                        throw new Exception("Error al recibir datos de audio: se esperaba más datos pero se recibieron cero.");
+                    }
+
+                    bytesReadTotal += bytesReadThisTime;
+                }
+
+                Console.WriteLine("Audio recibido de Unity.");
+                await SaveAudioLocally(fileData);
+                transcribedText = await SendFileToServer("guardar/audio_recibido.wav");
+
+                Stopwatch stopwatch = Stopwatch.StartNew();
+
+                stopwatch.Restart();
+
+                Console.WriteLine($"Tiempo total de EnvioServerHttp: {stopwatch.ElapsedMilliseconds / 1000.0} segundos");
+
+                Console.WriteLine(transcribedText);
+
+                GeneratePollyAudio(transcribedText, stream);
+            }
+            else if (header == "TEXTO")
+            {
+                byte[] textBytes = new byte[4];
+                bytesRead = await stream.ReadAsync(textBytes, 0, textBytes.Length);
+
+                if (bytesRead == 0)
+                {
+                    Console.WriteLine("Cliente desconectado.");
+                    break;
+                }
+
+                int textSize = BitConverter.ToInt32(textBytes, 0);
+
+                byte[] textData = new byte[textSize];
+                int bytesReadTotal = 0;
+                int bytesReadThisTime;
+
+                while (bytesReadTotal < textSize)
+                {
+                    bytesReadThisTime = await stream.ReadAsync(textData, bytesReadTotal, textSize - bytesReadTotal);
+
+                    if (bytesReadThisTime == 0)
+                    {
+                        throw new Exception("Error al recibir datos de texto: se esperaba más datos pero se recibieron cero.");
+                    }
+
+                    bytesReadTotal += bytesReadThisTime;
+                }
+
+                string text = System.Text.Encoding.UTF8.GetString(textData);
+                Console.WriteLine("Se cambio el idioma a: " + text);
+
+            }
+            else
+            {
+                Console.WriteLine("Encabezado desconocido: " + header);
+            }
         }
     }
-
+    
     /// <summary>
     /// The function `SendFileToServer` sends a file to a specified server URL using HTTP POST request
     /// with error handling.
@@ -214,7 +277,7 @@ class Program
                     Text = text,
                     // VoiceId = VoiceId.Lucia, // voz en Español.
                     VoiceId = VoiceId.Joanna, // Voz en Ingles.
-                    //VoiceId = VoiceId.Celine, // Voz en Frances.
+                    //VoiceId = VoiceId.Celine, // voz en frances
                     OutputFormat = OutputFormat.Pcm
                 };
 
