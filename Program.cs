@@ -119,7 +119,7 @@ class Program
 
         Console.WriteLine($"Tiempo total de EnvioServerHttp: {stopwatch.ElapsedMilliseconds / 1000.0} segundos");
 
-        Console.WriteLine(transcribedText);
+        Console.WriteLine("Respuesta de OpenAi: " + transcribedText);
       }
       else if (header == "TEXTO")
       {
@@ -189,7 +189,7 @@ class Program
       try
       {
 
-        string serverUrl = "http://192.168.1.17:9999/v1/OpenAi";
+        string serverUrl = "http://192.168.1.9:9999/v1/OpenAi";
 
 
         using (var fileContent = new ByteArrayContent(await File.ReadAllBytesAsync(filePath)))
@@ -298,6 +298,14 @@ class Program
 
           Console.WriteLine("Audio generado y guardado temporalmente en: " + audioFileName);
 
+          // Envío del texto como encabezado del audio
+          byte[] textBytes = Encoding.UTF8.GetBytes(text);
+          byte[] textSize = BitConverter.GetBytes(textBytes.Length);
+          clientStream.Write(textSize, 0, textSize.Length);
+          clientStream.Write(textBytes, 0, textBytes.Length);
+          Console.WriteLine("Texto enviado al cliente como encabezado del audio.");
+
+          // Envío del audio al cliente
           byte[] fileData = File.ReadAllBytes(audioFileName);
           byte[] fileSize = BitConverter.GetBytes(fileData.Length);
           clientStream.Write(fileSize, 0, fileSize.Length);
@@ -314,4 +322,5 @@ class Program
       Console.WriteLine("Error al generar y enviar el audio: " + ex.Message);
     }
   }
+
 }

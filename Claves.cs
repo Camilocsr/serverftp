@@ -9,7 +9,7 @@ namespace FTPSERVER
     {
         // Definir IPAddress para el servidor FTP
         // Define IPAddress for the FTP server
-        public static IPAddress IpAddress { get; } = IPAddress.Parse("192.168.1.17");
+        public static IPAddress IpAddress { get; } = IPAddress.Parse("");
 
         // Definir Puerto para el servidor FTP
         // Define Port for the FTP server
