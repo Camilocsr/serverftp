@@ -111,7 +111,7 @@ class Program
 
         Console.WriteLine("Audio recibido de Unity.");
         await SaveAudioLocally(fileData);
-        transcribedText = await SendFileToServer("guardar/audio_recibido.wav");
+        transcribedText = await SendFileToServerWithRetry("guardar/audio_recibido.wav",3);
 
         Stopwatch stopwatch = Stopwatch.StartNew();
 
@@ -120,8 +120,15 @@ class Program
         Console.WriteLine($"Tiempo total de EnvioServerHttp: {stopwatch.ElapsedMilliseconds / 1000.0} segundos");
 
         Console.WriteLine("Respuesta de OpenAi: " + transcribedText);
+
+        if (!usedTexts.Contains(transcribedText))
+        {
+
+          await GeneratePollyAudio(transcribedText, stream, IdiomaEscogidoCliente);
+          usedTexts.Add(transcribedText);
+        }
       }
-      else if (header == "TEXTO")
+      else if (header.Equals("TEXTO", StringComparison.OrdinalIgnoreCase) || header.Equals("T", StringComparison.OrdinalIgnoreCase))
       {
         byte[] textBytes = new byte[4];
         bytesRead = await stream.ReadAsync(textBytes, 0, textBytes.Length);
@@ -152,7 +159,6 @@ class Program
 
         string text = System.Text.Encoding.UTF8.GetString(textData);
 
-
         switch (text)
         {
           case "Spanish":
@@ -166,47 +172,93 @@ class Program
 
         IdiomaEscogidoCliente = text;
 
-        Console.WriteLine("Se cambio el idioma a: " + IdiomaEscogidoCliente);
+        Console.WriteLine("Mensaje del cliente: " + text);
+
+        string respuesta = await SendIdiomaServer(IdiomaEscogidoCliente);
+        if (respuesta != null)
+        {
+          Console.WriteLine("Respuesta del servidor: " + respuesta);
+        }
+
+        string successMessage = "Idioma cambiado a " + IdiomaEscogidoCliente;
+        string successHeader = "CAMBIO DE IDIOMA EXITOSO";
+        byte[] successMessageBytes = System.Text.Encoding.UTF8.GetBytes(successMessage);
+        byte[] successHeaderBytes = System.Text.Encoding.UTF8.GetBytes(successHeader);
+        byte[] successHeaderSizeBytes = BitConverter.GetBytes(successHeaderBytes.Length);
+        byte[] successMessageSizeBytes = BitConverter.GetBytes(successMessageBytes.Length);
+
+        await stream.WriteAsync(successHeaderSizeBytes, 0, successHeaderSizeBytes.Length);
+        await stream.WriteAsync(successHeaderBytes, 0, successHeaderBytes.Length);
+        await stream.WriteAsync(successMessageSizeBytes, 0, successMessageSizeBytes.Length);
+        await stream.WriteAsync(successMessageBytes, 0, successMessageBytes.Length);
+
+
       }
       else
       {
         Console.WriteLine("Encabezado desconocido: " + header);
       }
-
-      if (!usedTexts.Contains(transcribedText))
-      {
-        GeneratePollyAudio(transcribedText, stream, IdiomaEscogidoCliente);
-        usedTexts.Add(transcribedText);
-      }
     }
   }
 
-
-  static async Task<string> SendFileToServer(string filePath)
+  static async Task<string> SendIdiomaServer(string idiomaUnity)
   {
     using (var httpClient = new HttpClient())
     {
       try
       {
 
-        string serverUrl = "http://192.168.1.9:9999/v1/OpenAi";
+        string jsonBody = $"{{\"TextoUnity\": \"{idiomaUnity}\"}}";
 
+
+        string urlCompleta = "http://192.168.1.130:9999/v1/MensajeResivido";
+
+
+        var request = new HttpRequestMessage(HttpMethod.Get, urlCompleta);
+        request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+
+
+        HttpResponseMessage response = await httpClient.SendAsync(request);
+
+
+        if (response.IsSuccessStatusCode)
+        {
+          string responseBody = await response.Content.ReadAsStringAsync();
+          Console.WriteLine("Solicitud GET enviada exitosamente al servidor.");
+          return responseBody;
+        }
+        else
+        {
+          Console.WriteLine($"La solicitud GET al servidor falló. Código de estado: {response.StatusCode}");
+          return null;
+        }
+      }
+      catch (Exception ex)
+      {
+        Console.WriteLine($"Error al enviar la solicitud GET al servidor: {ex.Message}");
+        return null;
+      }
+    }
+  }
+  static async Task<string> SendFileToServer(string filePath)
+  {
+    using (var httpClient = new HttpClient())
+    {
+      try
+      {
+        string serverUrl = "http://192.168.1.130:9999/v1/OpenAi";
 
         using (var fileContent = new ByteArrayContent(await File.ReadAllBytesAsync(filePath)))
         {
-
           using (var formData = new MultipartFormDataContent())
           {
             formData.Add(fileContent);
 
-
             HttpResponseMessage response = await httpClient.PostAsync(serverUrl, formData);
-
 
             if (response.IsSuccessStatusCode)
             {
               Console.WriteLine("Archivo enviado exitosamente al servidor HTTP.");
-
               string responseBody = await response.Content.ReadAsStringAsync();
               return responseBody;
             }
@@ -227,6 +279,35 @@ class Program
   }
 
 
+  static async Task<string> SendFileToServerWithRetry(string filePath, int maxRetries)
+  {
+    for (int i = 0; i < maxRetries; i++)
+    {
+      try
+      {
+        string result = await SendFileToServer(filePath);
+        if (result != null)
+        {
+          return result;
+        }
+        else
+        {
+          Console.WriteLine($"Intento {i + 1}: Error al enviar el archivo al servidor HTTP. Se reintentará.");
+        }
+      }
+      catch (Exception ex)
+      {
+        Console.WriteLine($"Intento {i + 1}: Error al enviar el archivo al servidor HTTP: {ex.Message}. Se reintentará.");
+      }
+
+      
+      await Task.Delay(1000);
+    }
+
+    Console.WriteLine($"Se agotaron los intentos ({maxRetries}) para enviar el archivo al servidor HTTP.");
+    return null;
+  }
+
   static async Task SaveAudioLocally(byte[] fileData)
   {
     try
@@ -246,7 +327,7 @@ class Program
   }
 
 
-  static void GeneratePollyAudio(string text, NetworkStream clientStream, string language = "English")
+  static async Task GeneratePollyAudio(string text, NetworkStream clientStream, string language = "English")
   {
     try
     {
@@ -276,11 +357,11 @@ class Program
             break;
         }
 
-        var response = pollyClient.SynthesizeSpeechAsync(request).Result;
+        var response = await pollyClient.SynthesizeSpeechAsync(request);
 
         using (var memoryStream = new MemoryStream())
         {
-          response.AudioStream.CopyTo(memoryStream);
+          await response.AudioStream.CopyToAsync(memoryStream);
           memoryStream.Seek(0, SeekOrigin.Begin);
 
           string tempDirectory = Path.GetTempPath();
@@ -291,25 +372,25 @@ class Program
             using (var writer = new WaveFileWriter(fileStream, new WaveFormat(16000, 16, 1)))
             {
               var buffer = new byte[memoryStream.Length];
-              memoryStream.Read(buffer, 0, (int)memoryStream.Length);
-              writer.Write(buffer, 0, buffer.Length);
+              await memoryStream.ReadAsync(buffer, 0, (int)memoryStream.Length);
+              await writer.WriteAsync(buffer, 0, buffer.Length);
             }
           }
 
           Console.WriteLine("Audio generado y guardado temporalmente en: " + audioFileName);
 
-          // Envío del texto como encabezado del audio
+
           byte[] textBytes = Encoding.UTF8.GetBytes(text);
           byte[] textSize = BitConverter.GetBytes(textBytes.Length);
-          clientStream.Write(textSize, 0, textSize.Length);
-          clientStream.Write(textBytes, 0, textBytes.Length);
+          await clientStream.WriteAsync(textSize, 0, textSize.Length);
+          await clientStream.WriteAsync(textBytes, 0, textBytes.Length);
           Console.WriteLine("Texto enviado al cliente como encabezado del audio.");
 
-          // Envío del audio al cliente
-          byte[] fileData = File.ReadAllBytes(audioFileName);
+
+          byte[] fileData = await File.ReadAllBytesAsync(audioFileName);
           byte[] fileSize = BitConverter.GetBytes(fileData.Length);
-          clientStream.Write(fileSize, 0, fileSize.Length);
-          clientStream.Write(fileData, 0, fileData.Length);
+          await clientStream.WriteAsync(fileSize, 0, fileSize.Length);
+          await clientStream.WriteAsync(fileData, 0, fileData.Length);
           Console.WriteLine("Audio enviado al cliente.");
 
           File.Delete(audioFileName);
@@ -322,5 +403,4 @@ class Program
       Console.WriteLine("Error al generar y enviar el audio: " + ex.Message);
     }
   }
-
 }
